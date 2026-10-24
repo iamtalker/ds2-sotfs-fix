@@ -9,9 +9,26 @@ applies also write 1.
 import configparser, ctypes, ctypes.wintypes as w, os, struct, subprocess, sys, threading, time
 
 HERE = os.path.dirname(os.path.abspath(sys.executable if getattr(sys, "frozen", False) else __file__))
-EXE = os.path.join(HERE, "DarkSoulsII.exe")
-if not os.path.exists(EXE):
-    EXE = os.path.join(HERE, "Game", "DarkSoulsII.exe")
+
+
+def _is_self(path):
+    try:
+        return getattr(sys, "frozen", False) and os.path.samefile(path, sys.executable)
+    except OSError:
+        return False
+
+
+def _find_game_exe():
+    # installed as a replacement for DarkSoulsII.exe: the real game is DarkSoulsII_original.exe
+    for sub in ("", "Game"):
+        for name in ("DarkSoulsII_original.exe", "DarkSoulsII.exe"):
+            p = os.path.join(HERE, sub, name)
+            if os.path.isfile(p) and not _is_self(p):
+                return p
+    return os.path.join(HERE, "DarkSoulsII.exe")
+
+
+EXE = _find_game_exe()
 GAME_DIR = os.path.dirname(EXE)
 GLOBAL_RVA = 0x166C1D8   # VA 0x14166c1d8
 FLAG_OFF = 0x6D
@@ -80,7 +97,7 @@ def alive(h):
 
 def main():
     if not os.path.exists(EXE):
-        sys.exit("DarkSoulsII.exe not found next to the launcher")
+        sys.exit("game executable not found next to the launcher")
     proc = subprocess.Popen([EXE], cwd=GAME_DIR)
     access = PROCESS_QUERY_INFORMATION | PROCESS_VM_OPERATION | PROCESS_VM_READ | PROCESS_VM_WRITE
     h = None

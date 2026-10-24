@@ -15,6 +15,10 @@
 1. `DS2_Fix_Installer.exe`를 실행합니다.
 2. `DarkSoulsII.exe`가 있는 폴더를 고르고, 설치할 기능을 체크한 뒤 **설치**를 누릅니다.
 3. 앞으로 게임은 폴더에 생긴 **`launch_ds2.exe`** 로 실행합니다. (`DarkSoulsII.exe`를 직접 실행하면 적용되지 않습니다.)
+
+   **고급 옵션 "DarkSoulsII.exe 를 실행기로 대체"** (기본 꺼짐)를 켜면 원래 exe가 `DarkSoulsII_original.exe`로 이름이 바뀌고
+   실행기가 `DarkSoulsII.exe` 이름을 씁니다. 그러면 평소처럼 `DarkSoulsII.exe`를 실행해도 적용됩니다.
+   이름을 바꾼 뒤에도 게임이 실행되는지는 환경마다 다를 수 있으니, 문제가 생기면 **제거(원복)** 로 되돌리세요.
 4. 키 합치기를 설치했다면 DS2 키 설정에서 아래처럼 지정합니다. (`ds2_keys.ini`에서 바꿀 수 있습니다.)
 
    | DS2 동작 | 지정할 키 |
@@ -70,5 +74,12 @@ src/launch_ds2.py        실행기 (게임 실행 + 값 고정 + 키 레이어)
 src/ds2_keys.py          키 합치기 로직
 src/ds2_keys.ini         기본 설정
 installer/ds2_installer.py  설치 화면
-build.ps1                exe 빌드
+tests/test_installer.py  설치/제거 로직 시험 (원본 DarkSoulsII.exe 경로를 인자로)
+build.ps1                exe 빌드 (dist\DS2_Fix_Installer.exe 하나만 생성)
+```
+
+시험은 임시 복사본으로만 하며 원본 exe는 읽기만 합니다.
+
+```powershell
+py -3 tests\test_installer.py "<원본 DarkSoulsII.exe 경로>"
 ```
