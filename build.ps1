@@ -1,4 +1,4 @@
-# Builds dist\DS2_Fix_Installer.exe and dist\launch_ds2.exe.
+# Builds dist\DS2_Fix_Installer.exe (launch_ds2.exe is bundled inside it).
 # Needs: Python 3 (py launcher) and PyInstaller  ->  py -3 -m pip install pyinstaller
 # Usage: powershell -ExecutionPolicy Bypass -File build.ps1
 $ErrorActionPreference = 'Stop'
@@ -26,6 +26,7 @@ Build-Exe @('--onefile', '--windowed', '--name', 'DS2_Fix_Installer',
     '--add-data', "$root\src\ds2_keys.ini;.",
     "$root\installer\ds2_installer.py")
 
-Copy-Item -LiteralPath "$work\launcher\launch_ds2.exe" -Destination $dist -Force
+# Only the installer is shipped; it carries launch_ds2.exe inside.
+Get-ChildItem -LiteralPath $dist -Force | Remove-Item -Recurse -Force
 Copy-Item -LiteralPath "$work\installer\DS2_Fix_Installer.exe" -Destination $dist -Force
-Write-Host "Done: $dist"
+Write-Host "Done: $dist\DS2_Fix_Installer.exe"
