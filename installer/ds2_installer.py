@@ -4,7 +4,7 @@ Features (chosen on screen):
   1. double-click / slow-start fix  : patches DarkSoulsII.exe (supported build only) + speed lock in the launcher
   2. key merge                      : Space = run/roll/jump, Q = lock-on + menu back (works on any DS2 build)
 """
-import hashlib, os, shutil, stat, sys, threading, tkinter as tk
+import configparser, hashlib, os, shutil, stat, sys, threading, tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 ORIG_SHA256 = "d83922bb1a27b2860e3e2f593333ec2d1db2bddf2a51eb39d141ecbab0652334"
@@ -95,7 +95,43 @@ def install(folder, want_fix, want_keys, log):
             shutil.copyfile(res("ds2_keys.ini"), ini)
             log("ds2_keys.ini를 설치했습니다.")
     log("완료! 앞으로 게임은 launch_ds2.exe로 실행하세요.")
-    return True
+    if want_keys:
+        log("※ 키 합치기를 쓰려면 DS2 키 설정에서 키를 지정해야 합니다. (아래 안내 참고)")
+    return gdir
+
+
+def key_help_text(gdir=None):
+    """Guide text; the keys are read from the installed ds2_keys.ini if there is one."""
+    keys = {"run": "7", "jump": "8", "lockon": "9", "back": "0"}
+    cp = configparser.ConfigParser(inline_comment_prefixes=(";",))
+    candidates = [os.path.join(gdir, "ds2_keys.ini")] if gdir else []
+    candidates.append(res("ds2_keys.ini"))
+    for path in candidates:
+        if os.path.isfile(path):
+            cp.read(path, encoding="utf-8")
+            if cp.has_section("output_keys"):
+                keys.update({k: cp["output_keys"][k].upper() for k in keys if k in cp["output_keys"]})
+                break
+    return (
+        "■ 키 합치기 사용법\n\n"
+        "1. 게임은 반드시 launch_ds2.exe 로 실행하세요.\n"
+        "   (DarkSoulsII.exe를 직접 실행하면 적용되지 않습니다.)\n\n"
+        "2. 게임의 키 설정 화면에서 아래처럼 지정하세요.\n"
+        "   (키보드 윗줄의 숫자키입니다. 숫자패드가 아닙니다.)\n\n"
+        "      달리기 / 구르기   →  %(run)s\n"
+        "      점프                   →  %(jump)s\n"
+        "      락온                   →  %(lockon)s\n"
+        "      메뉴 뒤로가기     →  %(back)s\n\n"
+        "   위 키들이 다른 동작에 이미 지정되어 있으면 겹치므로 그 동작을 다른 키로 바꾸세요.\n\n"
+        "3. 이제 이렇게 조작합니다.\n"
+        "   · 스페이스바 짧게: 구르기    · 길게 누름: 대시\n"
+        "   · 대시하다가 스페이스바를 뗐다가 바로 다시 누름: 점프\n"
+        "   · Q: 락온 (메뉴에서는 뒤로가기)\n\n"
+        "※ 이 기능이 켜져 있는 동안 게임은 진짜 스페이스바와 Q를 받지 못합니다.\n"
+        "   (게임 창이 맨 앞일 때만 동작하고, 게임을 끄면 같이 꺼집니다.)\n"
+        "※ 키나 점프 타이밍은 게임 폴더의 ds2_keys.ini 에서 바꿀 수 있습니다.\n"
+        "   바꾼 뒤에는 게임을 껐다가 launch_ds2.exe 로 다시 실행하세요."
+    ) % keys
 
 
 def uninstall(folder, log):
@@ -128,8 +164,8 @@ class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("다크소울 2 SotFS 수정 설치")
-        self.geometry("560x520")
-        self.minsize(520, 480)
+        self.geometry("580x640")
+        self.minsize(540, 580)
         pad = {"padx": 14}
         ttk.Label(self, text="다크소울 2 SotFS 수정 설치", font=("Malgun Gothic", 14, "bold")).pack(anchor="w", pady=(14, 2), **pad)
         ttk.Label(self, text="게임 폴더를 고르고 설치할 기능을 선택하세요.").pack(anchor="w", **pad)
@@ -152,7 +188,11 @@ class App(tk.Tk):
                   foreground="#555").pack(anchor="w", padx=30, pady=(0, 6))
         ttk.Checkbutton(box, text="키 합치기 (DS3 방식 조작)", variable=self.keys).pack(anchor="w", padx=8)
         ttk.Label(box, text="스페이스바: 달리기/구르기 + 대시 중 다시 누르면 점프\nQ: 락온 + 메뉴 뒤로가기   (어느 DS2 버전에서든 설치 가능)",
-                  foreground="#555").pack(anchor="w", padx=30, pady=(0, 6))
+                  foreground="#555").pack(anchor="w", padx=30)
+        hint = ttk.Frame(box)
+        hint.pack(fill="x", padx=30, pady=(2, 8))
+        ttk.Label(hint, text="※ 설치 후 게임 키 설정에서 키 4개를 지정해야 합니다.", foreground="#a33").pack(side="left")
+        ttk.Button(hint, text="키 설정 도움말", command=self.show_key_help).pack(side="left", padx=8)
 
         ttk.Label(self, wraplength=520, foreground="#a33",
                   text="주의: 온라인 플레이에서는 사용하지 마세요. 게임 파일과 메모리를 수정하므로 "
@@ -185,17 +225,28 @@ class App(tk.Tk):
             messagebox.showwarning("폴더 선택", "게임 폴더를 먼저 선택하세요.")
             return
         try:
-            fn(folder, *args, self.log)
+            return fn(folder, *args, self.log)
         except PermissionError:
             messagebox.showerror("오류", "파일을 쓸 수 없습니다.\n게임이 실행 중이면 종료한 뒤 다시 시도하세요.")
         except Exception as e:
             messagebox.showerror("오류", str(e))
 
+    def show_key_help(self):
+        gdir = None
+        exe = find_game_exe(self.folder.get().strip()) if self.folder.get().strip() else None
+        if exe:
+            gdir = os.path.dirname(exe)
+        messagebox.showinfo("키 설정 도움말", key_help_text(gdir))
+
     def on_install(self):
         if not (self.fix.get() or self.keys.get()):
             messagebox.showinfo("기능 선택", "설치할 기능을 하나 이상 선택하세요.")
             return
-        self.run(install, self.fix.get(), self.keys.get())
+        gdir = self.run(install, self.fix.get(), self.keys.get())
+        if gdir and self.keys.get():
+            messagebox.showinfo("설치 완료 - 키 설정 안내", key_help_text(gdir))
+        elif gdir:
+            messagebox.showinfo("설치 완료", "설치가 끝났습니다.\n앞으로 게임은 launch_ds2.exe 로 실행하세요.")
 
     def on_uninstall(self):
         if messagebox.askyesno("제거", "설치한 파일을 삭제하고 원본 exe로 되돌릴까요?"):
