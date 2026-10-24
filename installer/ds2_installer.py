@@ -4,8 +4,12 @@ Features (chosen on screen):
   1. double-click / slow-start fix  : patches DarkSoulsII.exe (supported build only) + speed lock in the launcher
   2. key merge                      : Space = run/roll/jump, Q = lock-on + menu back (works on any DS2 build)
 """
-import configparser, hashlib, os, shutil, stat, sys, threading, tkinter as tk
+import configparser, hashlib, os, re, shutil, stat, sys, threading, tkinter as tk
 from tkinter import filedialog, messagebox, ttk
+
+if not getattr(sys, "frozen", False):
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src"))
+import ds2_keys  # key-name parser shared with the key layer
 
 ORIG_SHA256 = "d83922bb1a27b2860e3e2f593333ec2d1db2bddf2a51eb39d141ecbab0652334"
 PATCH_OFFSET = 0x199597
@@ -90,7 +94,7 @@ def make_writable(path):
     os.chmod(path, os.stat(path).st_mode | stat.S_IWRITE)
 
 
-def install(folder, want_fix, want_keys, want_replace, log):
+def install(folder, want_fix, want_keys, want_replace, keys, log):
     exe = find_game_exe(folder)
     if not exe:
         raise RuntimeError("선택한 폴더에서 DarkSoulsII.exe를 찾을 수 없습니다.\nDarkSoulsII.exe가 있는 폴더(또는 그 상위 폴더)를 선택하세요.")
@@ -138,10 +142,13 @@ def install(folder, want_fix, want_keys, want_replace, log):
     if want_keys:
         ini = os.path.join(gdir, "ds2_keys.ini")
         if os.path.exists(ini):
-            log("ds2_keys.ini가 이미 있어 기존 설정을 유지합니다.")
+            log("ds2_keys.ini가 이미 있어 시간 등 다른 설정은 유지합니다.")
         else:
             shutil.copyfile(res("ds2_keys.ini"), ini)
             log("ds2_keys.ini를 설치했습니다.")
+        if keys:
+            apply_keys_to_ini(ini, keys)
+            log("게임에 보낼 키: " + ", ".join("%s=%s" % (KEY_LABELS[k], keys[k]) for k in KEY_ORDER))
     log("완료! 앞으로 게임은 %s 로 실행하세요." % launcher)
     if want_keys:
         log("※ 키 합치기를 쓰려면 DS2 키 설정에서 키를 지정해야 합니다. (아래 안내 참고)")
@@ -152,9 +159,15 @@ def launcher_name(gdir):
     return GAME_EXE if os.path.isfile(os.path.join(gdir, ORIG_NAME)) else "launch_ds2.exe"
 
 
-def key_help_text(gdir=None):
-    """Guide text; the keys are read from the installed ds2_keys.ini if there is one."""
-    keys = {"run": "7", "jump": "8", "lockon": "9", "back": "0"}
+KEY_ORDER = ("run", "jump", "lockon", "back")
+KEY_LABELS = {"run": "달리기/구르기", "jump": "점프", "lockon": "락온", "back": "메뉴 뒤로가기"}
+DEFAULT_KEYS = {"run": "7", "jump": "8", "lockon": "9", "back": "0"}
+INPUT_KEY_NAMES = ("SPACE", "Q")  # the keys the layer swallows; they cannot also be output keys
+
+
+def read_keys(gdir=None):
+    """Output keys from the installed ds2_keys.ini, else from the bundled default."""
+    keys = dict(DEFAULT_KEYS)
     cp = configparser.ConfigParser(inline_comment_prefixes=(";",))
     candidates = [os.path.join(gdir, "ds2_keys.ini")] if gdir else []
     candidates.append(res("ds2_keys.ini"))
@@ -162,8 +175,45 @@ def key_help_text(gdir=None):
         if os.path.isfile(path):
             cp.read(path, encoding="utf-8")
             if cp.has_section("output_keys"):
-                keys.update({k: cp["output_keys"][k].upper() for k in keys if k in cp["output_keys"]})
+                keys.update({k: cp["output_keys"][k].strip().upper() for k in keys if k in cp["output_keys"]})
                 break
+    return keys
+
+
+def validate_keys(keys):
+    """-> (normalized keys, error message or None)"""
+    out = {}
+    for k in KEY_ORDER:
+        name = str(keys.get(k, "")).strip().upper()
+        if not name:
+            return None, "'%s' 키가 비어 있습니다." % KEY_LABELS[k]
+        try:
+            ds2_keys.vk_of(name)
+        except ValueError:
+            return None, "'%s'는 사용할 수 없는 키 이름입니다. (예: 7, A, F6, NUM1)" % name
+        if name in INPUT_KEY_NAMES:
+            return None, "'%s'는 직접 누르는 키(스페이스바, Q)라서 게임에 보내는 키로 쓸 수 없습니다." % name
+        out[k] = name
+    if len(set(out.values())) != len(out):
+        return None, "같은 키를 두 동작에 쓸 수 없습니다. 4개 키가 서로 달라야 합니다."
+    return out, None
+
+
+def apply_keys_to_ini(path, keys):
+    """Set the four [output_keys] values and keep every comment and other setting."""
+    with open(path, encoding="utf-8") as f:
+        text = f.read()
+    for k in KEY_ORDER:
+        text, n = re.subn(r"(?m)^(%s\s*=\s*).*$" % k, lambda m: m.group(1) + keys[k], text, count=1)
+        if n != 1:
+            raise RuntimeError("ds2_keys.ini에서 '%s' 항목을 찾을 수 없습니다." % k)
+    with open(path, "w", encoding="utf-8", newline="") as f:
+        f.write(text)
+
+
+def key_help_text(gdir=None, keys=None):
+    """Guide text; `keys` overrides what is read from the installed ds2_keys.ini."""
+    keys = dict(keys) if keys else read_keys(gdir)
     replaced = bool(gdir) and os.path.isfile(os.path.join(gdir, ORIG_NAME))
     keys["launcher"] = GAME_EXE if replaced else "launch_ds2.exe"
     return (
@@ -223,8 +273,8 @@ class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("다크소울 2 SotFS 수정 설치")
-        self.geometry("580x760")
-        self.minsize(540, 700)
+        self.geometry("600x820")
+        self.minsize(560, 760)
         pad = {"padx": 14}
         ttk.Label(self, text="다크소울 2 SotFS 수정 설치", font=("Malgun Gothic", 14, "bold")).pack(anchor="w", pady=(14, 2), **pad)
         ttk.Label(self, text="게임 폴더를 고르고 설치할 기능을 선택하세요.").pack(anchor="w", **pad)
@@ -233,9 +283,10 @@ class App(tk.Tk):
         row.pack(fill="x", pady=(12, 4), **pad)
         self.folder = tk.StringVar()
         guess = os.path.dirname(os.path.abspath(sys.executable if getattr(sys, "frozen", False) else __file__))
+        ttk.Entry(row, textvariable=self.folder).pack(side="left", fill="x", expand=True)
+        self.folder.trace_add("write", lambda *_: self.load_installed_keys())
         if find_game_exe(guess):
             self.folder.set(guess)
-        ttk.Entry(row, textvariable=self.folder).pack(side="left", fill="x", expand=True)
         ttk.Button(row, text="찾아보기", command=self.browse).pack(side="left", padx=(6, 0))
 
         self.fix = tk.BooleanVar(value=True)
@@ -249,9 +300,18 @@ class App(tk.Tk):
         ttk.Checkbutton(box, text="키 합치기 (DS3 방식 조작)", variable=self.keys).pack(anchor="w", padx=8)
         ttk.Label(box, text="스페이스바: 달리기/구르기 + 대시 중 다시 누르면 점프\nQ: 락온 + 메뉴 뒤로가기   (어느 DS2 버전에서든 설치 가능)",
                   foreground="#555").pack(anchor="w", padx=30)
+        ttk.Label(box, text="게임에 보낼 키 — 게임의 키 설정에 지정한 키와 똑같이 적으세요.",
+                  foreground="#a33").pack(anchor="w", padx=30, pady=(4, 2))
+        kf = ttk.Frame(box)
+        kf.pack(fill="x", padx=30)
+        self.key_vars = {}
+        for i, k in enumerate(KEY_ORDER):
+            ttk.Label(kf, text=KEY_LABELS[k]).grid(row=0, column=i, sticky="w", padx=(0, 10))
+            self.key_vars[k] = tk.StringVar(value=DEFAULT_KEYS[k])
+            ttk.Entry(kf, textvariable=self.key_vars[k], width=9, justify="center").grid(row=1, column=i, sticky="w", padx=(0, 10))
         hint = ttk.Frame(box)
-        hint.pack(fill="x", padx=30, pady=(2, 8))
-        ttk.Label(hint, text="※ 설치 후 게임 키 설정에서 키 4개를 지정해야 합니다.", foreground="#a33").pack(side="left")
+        hint.pack(fill="x", padx=30, pady=(6, 8))
+        ttk.Label(hint, text="키 이름 예: 7  A  F6  NUM1   (숫자패드 숫자는 NUM0~NUM9)", foreground="#555").pack(side="left")
         ttk.Button(hint, text="키 설정 도움말", command=self.show_key_help).pack(side="left", padx=8)
 
         opt = ttk.LabelFrame(self, text="고급 옵션")
@@ -275,6 +335,7 @@ class App(tk.Tk):
 
         self.out = tk.Text(self, height=9, state="disabled", wrap="word")
         self.out.pack(fill="both", expand=True, pady=(0, 14), **pad)
+        self.load_installed_keys()
 
     def log(self, msg):
         self.out.configure(state="normal")
@@ -300,18 +361,36 @@ class App(tk.Tk):
         except Exception as e:
             messagebox.showerror("오류", str(e))
 
+    def game_dir(self):
+        folder = self.folder.get().strip()
+        exe = find_game_exe(folder) if folder and os.path.isdir(folder) else None
+        return os.path.dirname(exe) if exe else None
+
+    def load_installed_keys(self):
+        """If the chosen folder already has a ds2_keys.ini, show its keys in the boxes."""
+        gdir = self.game_dir()
+        if gdir and os.path.isfile(os.path.join(gdir, "ds2_keys.ini")) and hasattr(self, "key_vars"):
+            for k, v in read_keys(gdir).items():
+                self.key_vars[k].set(v)
+
+    def typed_keys(self):
+        return {k: v.get() for k, v in self.key_vars.items()}
+
     def show_key_help(self):
-        gdir = None
-        exe = find_game_exe(self.folder.get().strip()) if self.folder.get().strip() else None
-        if exe:
-            gdir = os.path.dirname(exe)
-        messagebox.showinfo("키 설정 도움말", key_help_text(gdir))
+        keys, err = validate_keys(self.typed_keys())
+        messagebox.showinfo("키 설정 도움말", key_help_text(self.game_dir(), keys if not err else None))
 
     def on_install(self):
         if not (self.fix.get() or self.keys.get()):
             messagebox.showinfo("기능 선택", "설치할 기능을 하나 이상 선택하세요.")
             return
-        gdir = self.run(install, self.fix.get(), self.keys.get(), self.replace.get())
+        keys = None
+        if self.keys.get():
+            keys, err = validate_keys(self.typed_keys())
+            if err:
+                messagebox.showwarning("키 확인", err)
+                return
+        gdir = self.run(install, self.fix.get(), self.keys.get(), self.replace.get(), keys)
         if gdir and self.keys.get():
             messagebox.showinfo("설치 완료 - 키 설정 안내", key_help_text(gdir))
         elif gdir:

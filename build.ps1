@@ -22,6 +22,7 @@ Build-Exe @('--onefile', '--noconsole', '--name', 'launch_ds2',
 # 2) installer (bundles the launcher and the default ini)
 Build-Exe @('--onefile', '--windowed', '--name', 'DS2_Fix_Installer',
     '--distpath', "$work\installer", '--workpath', "$work\w2", '--specpath', $work,
+    '--paths', "$root\src",
     '--add-data', "$work\launcher\launch_ds2.exe;.",
     '--add-data', "$root\src\ds2_keys.ini;.",
     "$root\installer\ds2_installer.py")
